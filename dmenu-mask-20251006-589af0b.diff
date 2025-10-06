@@ -1,0 +1,331 @@
+From 589af0b6a371e7b6f3e259c990d4923bc5399d7d Mon Sep 17 00:00:00 2001
+From: flavio-munis <flavio.munis42@gmail.com>
+Date: Mon, 6 Oct 2025 02:35:10 -0300
+Subject: [PATCH] mask input with randonly selected character from -M
+ [characters] (utf-8 supported)
+
+---
+ dmenu.1 |   5 ++
+ dmenu.c | 162 +++++++++++++++++++++++++++++++++++++++++++++++++++++---
+ 2 files changed, 161 insertions(+), 6 deletions(-)
+
+diff --git a/dmenu.1 b/dmenu.1
+index 323f93c..8e9ce99 100644
+--- a/dmenu.1
++++ b/dmenu.1
+@@ -22,6 +22,8 @@ dmenu \- dynamic menu
+ .IR color ]
+ .RB [ \-w
+ .IR windowid ]
++.RB [ \-M
++.IR mask ]
+ .P
+ .BR dmenu_run " ..."
+ .SH DESCRIPTION
+@@ -80,6 +82,9 @@ prints version information to stdout, then exits.
+ .TP
+ .BI \-w " windowid"
+ embed into windowid.
++.BI \-M " mask"
++masks user input replacing every character with a random character from mask.
++supports utf-8 characters inputed and in mask.
+ .SH USAGE
+ dmenu is completely controlled by the keyboard.  Items are selected using the
+ arrow keys, page up, page down, home, and end.
+diff --git a/dmenu.c b/dmenu.c
+index 9577b37..9b1c044 100644
+--- a/dmenu.c
++++ b/dmenu.c
+@@ -43,6 +43,10 @@ static struct item *items = NULL;
+ static struct item *matches, *matchend;
+ static struct item *prev, *curr, *next, *sel;
+ static int mon = -1, screen;
++static char *mask = NULL;
++static size_t masklength = 0; /* In utf-8 runes */
++static char masktext[BUFSIZ] = "";
++static size_t maskcursor;
+ 
+ static Atom clip, utf8;
+ static Display *dpy;
+@@ -142,6 +146,65 @@ drawitem(struct item *item, int x, int y, int w)
+ 	return drw_text(drw, x, y, w, bh, lrpad / 2, item->text, 0);
+ }
+ 
++static size_t
++utf8_strlen(const char *s) 
++{
++    size_t count = 0;
++    for (; *s != '\0'; ++s)
++	    if ((*s & 0xC0) != 0x80)
++		    count++;
++
++	return count;
++}
++
++static size_t
++nth_rune(const char *buf, int nth)
++{
++    size_t byte_index = 0;
++    int rune_count = 0;
++
++    while (rune_count <= nth) {
++        if ((unsigned char)buf[byte_index] < 0x80 || 
++			(buf[byte_index] & 0xC0) != 0x80) {
++            rune_count++;
++        }
++        byte_index++;
++    }
++    
++    return byte_index - 1;
++}
++
++static size_t
++createmaskinput(char* maskbuf, const char* str)
++{
++    unsigned int seed = (unsigned int)time(NULL) + maskcursor;
++    size_t str_utf8_len = utf8_strlen(str);
++    size_t maskbuf_len = 0;
++
++    for (size_t i = 0; i < str_utf8_len; i++){
++	    int nth = rand_r(&seed) % masklength;
++	    size_t mask_rune_start = nth_rune(mask, nth);
++        size_t mask_rune_len;
++	
++	    if (nth == masklength) {
++	        mask_rune_len = strlen(mask + mask_rune_start);
++	        memcpy(maskbuf + maskbuf_len, 
++				   mask + mask_rune_start, 
++				   mask_rune_len);
++	        maskbuf_len += mask_rune_len;
++            continue;
++	    }
++	
++	    mask_rune_len = nth_rune(mask, nth + 1) - mask_rune_start;
++	    memcpy(maskbuf + maskbuf_len, 
++			   mask + mask_rune_start, 
++			   mask_rune_len);
++	    maskbuf_len += mask_rune_len;
++    }
++	
++	return maskbuf_len;
++}
++
+ static void
+ drawmenu(void)
+ {
+@@ -159,9 +222,15 @@ drawmenu(void)
+ 	/* draw input field */
+ 	w = (lines > 0 || !matches) ? mw - x : inputw;
+ 	drw_setscheme(drw, scheme[SchemeNorm]);
+-	drw_text(drw, x, 0, w, bh, lrpad / 2, text, 0);
+ 
+-	curpos = TEXTW(text) - TEXTW(&text[cursor]);
++	if (masklength) {
++	    drw_text(drw, x, 0, w, bh, lrpad / 2, masktext, 0);	
++	    curpos = TEXTW(masktext) - TEXTW(&masktext[maskcursor]);
++	} else {
++	    drw_text(drw, x, 0, w, bh, lrpad / 2, text, 0);	
++	    curpos = TEXTW(text) - TEXTW(&text[cursor]);
++	}
++
+ 	if ((curpos += lrpad / 2 - 1) < w) {
+ 		drw_setscheme(drw, scheme[SchemeNorm]);
+ 		drw_rect(drw, x + curpos, 2, 2, bh - 4, 1, 0);
+@@ -304,6 +373,41 @@ nextrune(int inc)
+ 	return n;
+ }
+ 
++static void
++insert_mask(const char *str, ssize_t n)
++{
++	if (strlen(masktext) + n > sizeof masktext - 1)
++		return;
++	
++	if (n > 0) {
++	    char maskbuf[64];
++		size_t mask_size = createmaskinput(maskbuf, str);
++	
++		/* move existing text out of the way, insert new text, and update cursor */
++		memmove(&masktext[maskcursor + mask_size], &masktext[maskcursor], sizeof masktext - maskcursor - mask_size);
++
++		memcpy(&masktext[maskcursor], maskbuf, mask_size);
++		maskcursor += mask_size;
++		return;
++	} 
++	
++	/* move existing text out of the way, insert new text, and update cursor */
++	memmove(&masktext[maskcursor + n], &masktext[maskcursor], sizeof masktext - maskcursor - MAX(n, 0));
++
++	maskcursor += n;
++}
++
++static size_t
++nextrune_mask(int inc)
++{
++	ssize_t n;
++
++	/* return location of next utf8 rune in the given direction (+1 or -1) */
++	for (n = maskcursor + inc; n + inc >= 0 && (masktext[n] & 0xc0) == 0x80; n += inc)
++		;
++	return n;
++}
++
+ static void
+ movewordedge(int dir)
+ {
+@@ -359,12 +463,23 @@ keypress(XKeyEvent *ev)
+ 
+ 		case XK_k: /* delete right */
+ 			text[cursor] = '\0';
++			if (masklength) masktext[maskcursor] = '\0';
+ 			match();
+ 			break;
+ 		case XK_u: /* delete left */
+ 			insert(NULL, 0 - cursor);
++			if (masklength) insert(NULL, 0 - maskcursor);
+ 			break;
+ 		case XK_w: /* delete word */
++		    /* Whole text is treated as a word */
++		    if (masklength) {
++			    cursor = 0;
++				maskcursor = 0;
++				text[cursor] = '\0';
++				masktext[maskcursor] = '\0';
++				break;
++			}
++
+ 			while (cursor > 0 && strchr(worddelimiters, text[nextrune(-1)]))
+ 				insert(NULL, nextrune(-1) - cursor);
+ 			while (cursor > 0 && !strchr(worddelimiters, text[nextrune(-1)]))
+@@ -377,11 +492,21 @@ keypress(XKeyEvent *ev)
+ 			return;
+ 		case XK_Left:
+ 		case XK_KP_Left:
++		    if (masklength) {
++			    cursor = 0;
++			    maskcursor = 0;
++				goto draw;
++			}
+ 			movewordedge(-1);
+ 			goto draw;
+ 		case XK_Right:
+ 		case XK_KP_Right:
+-			movewordedge(+1);
++		    if (masklength) {
++			    cursor = strlen(text);
++				maskcursor = strlen(masktext);
++				goto draw;
++			}
++		    movewordedge(+1);
+ 			goto draw;
+ 		case XK_Return:
+ 		case XK_KP_Enter:
+@@ -395,9 +520,19 @@ keypress(XKeyEvent *ev)
+ 	} else if (ev->state & Mod1Mask) {
+ 		switch(ksym) {
+ 		case XK_b:
+-			movewordedge(-1);
++			if (masklength) {
++			    cursor = 0;
++			    maskcursor = 0;
++				goto draw;
++			}
++		    movewordedge(-1);
+ 			goto draw;
+ 		case XK_f:
++		    if (masklength) {
++			    cursor = strlen(text);
++				maskcursor = strlen(masktext);
++				goto draw;
++			}
+ 			movewordedge(+1);
+ 			goto draw;
+ 		case XK_g: ksym = XK_Home;  break;
+@@ -414,24 +549,29 @@ keypress(XKeyEvent *ev)
+ 	switch(ksym) {
+ 	default:
+ insert:
+-		if (!iscntrl((unsigned char)*buf))
++		if (!iscntrl((unsigned char)*buf)) {
+ 			insert(buf, len);
++			if (masklength) insert_mask(buf, len);
++		}
+ 		break;
+ 	case XK_Delete:
+ 	case XK_KP_Delete:
+ 		if (text[cursor] == '\0')
+ 			return;
+ 		cursor = nextrune(+1);
++		if (masklength) maskcursor = nextrune_mask(+1);
+ 		/* fallthrough */
+ 	case XK_BackSpace:
+ 		if (cursor == 0)
+ 			return;
+ 		insert(NULL, nextrune(-1) - cursor);
++		if (masklength) insert_mask(NULL, nextrune_mask(-1) - maskcursor);
+ 		break;
+ 	case XK_End:
+ 	case XK_KP_End:
+ 		if (text[cursor] != '\0') {
+ 			cursor = strlen(text);
++			if (masklength) maskcursor = strlen(masktext);
+ 			break;
+ 		}
+ 		if (next) {
+@@ -452,6 +592,7 @@ insert:
+ 	case XK_KP_Home:
+ 		if (sel == matches) {
+ 			cursor = 0;
++			if (masklength) maskcursor = 0;
+ 			break;
+ 		}
+ 		sel = curr = matches;
+@@ -461,6 +602,7 @@ insert:
+ 	case XK_KP_Left:
+ 		if (cursor > 0 && (!sel || !sel->left || lines > 0)) {
+ 			cursor = nextrune(-1);
++			if (masklength) maskcursor = nextrune_mask(-1);
+ 			break;
+ 		}
+ 		if (lines > 0)
+@@ -501,6 +643,7 @@ insert:
+ 	case XK_KP_Right:
+ 		if (text[cursor] != '\0') {
+ 			cursor = nextrune(+1);
++			if (masklength) maskcursor = nextrune_mask(+1);
+ 			break;
+ 		}
+ 		if (lines > 0)
+@@ -540,6 +683,8 @@ paste(void)
+ 	                   utf8, &da, &di, &dl, &dl, (unsigned char **)&p)
+ 	    == Success && p) {
+ 		insert(p, (q = strchr(p, '\n')) ? q - p : (ssize_t)strlen(p));
++		if (masklength)
++		    insert_mask(p, (q = strchr(p, '\n')) ? q - p : (ssize_t)strlen(p));
+ 		XFree(p);
+ 	}
+ 	drawmenu();
+@@ -715,7 +860,8 @@ static void
+ usage(void)
+ {
+ 	die("usage: dmenu [-bfiv] [-l lines] [-p prompt] [-fn font] [-m monitor]\n"
+-	    "             [-nb color] [-nf color] [-sb color] [-sf color] [-w windowid]");
++	    "             [-nb color] [-nf color] [-sb color] [-sf color] [-w windowid]\n"
++	    "             [-M mask]");
+ }
+ 
+ int
+@@ -757,6 +903,10 @@ main(int argc, char *argv[])
+ 			colors[SchemeSel][ColFg] = argv[++i];
+ 		else if (!strcmp(argv[i], "-w"))   /* embedding window id */
+ 			embed = argv[++i];
++	    else if (!strcmp(argv[i], "-M")){
++		    mask = argv[++i];
++			masklength = utf8_strlen(mask);
++		}
+ 		else
+ 			usage();
+ 
+-- 
+2.34.1
+
