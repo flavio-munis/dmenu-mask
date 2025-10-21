@@ -1,39 +1,15 @@
-From 589af0b6a371e7b6f3e259c990d4923bc5399d7d Mon Sep 17 00:00:00 2001
+From 6a4aded2a1244cf0fe5cab404b494f03add432eb Mon Sep 17 00:00:00 2001
 From: flavio-munis <flavio.munis42@gmail.com>
-Date: Mon, 6 Oct 2025 02:35:10 -0300
-Subject: [PATCH] mask input with randonly selected character from -M
- [characters] (utf-8 supported)
+Date: Tue, 21 Oct 2025 17:47:18 -0300
+Subject: [PATCH] mask user input with characters randomly selected from -M
+ [string] option
 
 ---
- dmenu.1 |   5 ++
- dmenu.c | 162 +++++++++++++++++++++++++++++++++++++++++++++++++++++---
- 2 files changed, 161 insertions(+), 6 deletions(-)
+ dmenu.c | 164 +++++++++++++++++++++++++++++++++++++++++++++++++++++---
+ 1 file changed, 158 insertions(+), 6 deletions(-)
 
-diff --git a/dmenu.1 b/dmenu.1
-index 323f93c..8e9ce99 100644
---- a/dmenu.1
-+++ b/dmenu.1
-@@ -22,6 +22,8 @@ dmenu \- dynamic menu
- .IR color ]
- .RB [ \-w
- .IR windowid ]
-+.RB [ \-M
-+.IR mask ]
- .P
- .BR dmenu_run " ..."
- .SH DESCRIPTION
-@@ -80,6 +82,9 @@ prints version information to stdout, then exits.
- .TP
- .BI \-w " windowid"
- embed into windowid.
-+.BI \-M " mask"
-+masks user input replacing every character with a random character from mask.
-+supports utf-8 characters inputed and in mask.
- .SH USAGE
- dmenu is completely controlled by the keyboard.  Items are selected using the
- arrow keys, page up, page down, home, and end.
 diff --git a/dmenu.c b/dmenu.c
-index 9577b37..9b1c044 100644
+index 9577b37..d4b9491 100644
 --- a/dmenu.c
 +++ b/dmenu.c
 @@ -43,6 +43,10 @@ static struct item *items = NULL;
@@ -113,16 +89,18 @@ index 9577b37..9b1c044 100644
  static void
  drawmenu(void)
  {
-@@ -159,9 +222,15 @@ drawmenu(void)
+@@ -159,9 +222,17 @@ drawmenu(void)
  	/* draw input field */
  	w = (lines > 0 || !matches) ? mw - x : inputw;
  	drw_setscheme(drw, scheme[SchemeNorm]);
 -	drw_text(drw, x, 0, w, bh, lrpad / 2, text, 0);
  
 -	curpos = TEXTW(text) - TEXTW(&text[cursor]);
-+	if (masklength) {
-+	    drw_text(drw, x, 0, w, bh, lrpad / 2, masktext, 0);	
-+	    curpos = TEXTW(masktext) - TEXTW(&masktext[maskcursor]);
++	if (mask) {
++		if (masklength){
++			drw_text(drw, x, 0, w, bh, lrpad / 2, masktext, 0);	
++			curpos = TEXTW(masktext) - TEXTW(&masktext[maskcursor]);
++		}
 +	} else {
 +	    drw_text(drw, x, 0, w, bh, lrpad / 2, text, 0);	
 +	    curpos = TEXTW(text) - TEXTW(&text[cursor]);
@@ -131,7 +109,7 @@ index 9577b37..9b1c044 100644
  	if ((curpos += lrpad / 2 - 1) < w) {
  		drw_setscheme(drw, scheme[SchemeNorm]);
  		drw_rect(drw, x + curpos, 2, 2, bh - 4, 1, 0);
-@@ -304,6 +373,41 @@ nextrune(int inc)
+@@ -304,6 +375,41 @@ nextrune(int inc)
  	return n;
  }
  
@@ -173,7 +151,7 @@ index 9577b37..9b1c044 100644
  static void
  movewordedge(int dir)
  {
-@@ -359,12 +463,23 @@ keypress(XKeyEvent *ev)
+@@ -359,12 +465,23 @@ keypress(XKeyEvent *ev)
  
  		case XK_k: /* delete right */
  			text[cursor] = '\0';
@@ -197,7 +175,7 @@ index 9577b37..9b1c044 100644
  			while (cursor > 0 && strchr(worddelimiters, text[nextrune(-1)]))
  				insert(NULL, nextrune(-1) - cursor);
  			while (cursor > 0 && !strchr(worddelimiters, text[nextrune(-1)]))
-@@ -377,11 +492,21 @@ keypress(XKeyEvent *ev)
+@@ -377,11 +494,21 @@ keypress(XKeyEvent *ev)
  			return;
  		case XK_Left:
  		case XK_KP_Left:
@@ -220,7 +198,7 @@ index 9577b37..9b1c044 100644
  			goto draw;
  		case XK_Return:
  		case XK_KP_Enter:
-@@ -395,9 +520,19 @@ keypress(XKeyEvent *ev)
+@@ -395,9 +522,19 @@ keypress(XKeyEvent *ev)
  	} else if (ev->state & Mod1Mask) {
  		switch(ksym) {
  		case XK_b:
@@ -241,7 +219,7 @@ index 9577b37..9b1c044 100644
  			movewordedge(+1);
  			goto draw;
  		case XK_g: ksym = XK_Home;  break;
-@@ -414,24 +549,29 @@ keypress(XKeyEvent *ev)
+@@ -414,24 +551,29 @@ keypress(XKeyEvent *ev)
  	switch(ksym) {
  	default:
  insert:
@@ -272,7 +250,7 @@ index 9577b37..9b1c044 100644
  			break;
  		}
  		if (next) {
-@@ -452,6 +592,7 @@ insert:
+@@ -452,6 +594,7 @@ insert:
  	case XK_KP_Home:
  		if (sel == matches) {
  			cursor = 0;
@@ -280,7 +258,7 @@ index 9577b37..9b1c044 100644
  			break;
  		}
  		sel = curr = matches;
-@@ -461,6 +602,7 @@ insert:
+@@ -461,6 +604,7 @@ insert:
  	case XK_KP_Left:
  		if (cursor > 0 && (!sel || !sel->left || lines > 0)) {
  			cursor = nextrune(-1);
@@ -288,7 +266,7 @@ index 9577b37..9b1c044 100644
  			break;
  		}
  		if (lines > 0)
-@@ -501,6 +643,7 @@ insert:
+@@ -501,6 +645,7 @@ insert:
  	case XK_KP_Right:
  		if (text[cursor] != '\0') {
  			cursor = nextrune(+1);
@@ -296,7 +274,7 @@ index 9577b37..9b1c044 100644
  			break;
  		}
  		if (lines > 0)
-@@ -540,6 +683,8 @@ paste(void)
+@@ -540,6 +685,8 @@ paste(void)
  	                   utf8, &da, &di, &dl, &dl, (unsigned char **)&p)
  	    == Success && p) {
  		insert(p, (q = strchr(p, '\n')) ? q - p : (ssize_t)strlen(p));
@@ -305,7 +283,7 @@ index 9577b37..9b1c044 100644
  		XFree(p);
  	}
  	drawmenu();
-@@ -715,7 +860,8 @@ static void
+@@ -715,7 +862,8 @@ static void
  usage(void)
  {
  	die("usage: dmenu [-bfiv] [-l lines] [-p prompt] [-fn font] [-m monitor]\n"
@@ -315,7 +293,7 @@ index 9577b37..9b1c044 100644
  }
  
  int
-@@ -757,6 +903,10 @@ main(int argc, char *argv[])
+@@ -757,6 +905,10 @@ main(int argc, char *argv[])
  			colors[SchemeSel][ColFg] = argv[++i];
  		else if (!strcmp(argv[i], "-w"))   /* embedding window id */
  			embed = argv[++i];
@@ -327,5 +305,5 @@ index 9577b37..9b1c044 100644
  			usage();
  
 -- 
-2.34.1
+2.51.1
 
