@@ -2,7 +2,7 @@
 Add the option `-M [mask]` to dmenu, where all user input will be masked using the characters passed as `[mask]`.
 
 ## **What is the value [mask]**
-Any sequence of utf-8 characters, the characters are choosen randonly and replaces the character typed, which can also be any utf-8 character.
+Any sequence of utf-8 characters, the characters are choosen randonly and replaces the character typed, which can also be any utf-8 character. Mask can be a empty string `""` and no text will be draw, similar to password input in terminal.
 
 ## **How does it Work**
 `dmenu-mask` adds a new buffer `masktext` which is synchronized with the `text` buffer at a utf-8 rune level.
@@ -15,6 +15,8 @@ We can use `createmaskinput()` at the function `draw()`, in which will mask the 
 To have a _'persistent'_ mask, one which will update only when new text inserted or deleted, we need a new buffer to store that mask, and also, a new variable to traverse the text (`maskcursor`), new functions to navigate at a rune level (`nextrune_mask()`, `nth_rune()`), and functions to insert/update a mask (`insert_mask()`, `createmaskinput()` and `utf8_strlen()`).
 
 ## **Shortcuts With `-M` Active**
+Only when `mask != ""`.
+
 * **`Ctrl+k` (Delete Right)**     -> Deletes all text to the right of the cursor.
 * **`Ctrl+u` (Delete Left)**      -> Deletes all text to the left of the cursor.
 * **`Ctrl+w` (Delete Word)**      -> The whole text is treated as a word, deletes all text.
@@ -43,4 +45,4 @@ Use `dmenu -M "*" <&-` for the classic password mask.
 * [dmenu-password](https://tools.suckless.org/dmenu/patches/password/)
 
 ## Todo
-[ ] - Allow mask to be nothing and no text be show, similar to inputing password on tty mode.
+[x] - Allow mask to be nothing and no text be show, similar to inputing password on tty mode.
